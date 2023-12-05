@@ -25,7 +25,7 @@ from gi.repository import GstSdp
 # This one can be used for testing
 PIPELINE_DESC = '''
  videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! vp8enc deadline=1 ! rtpvp8pay !
- queue ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! webrtcbin name=sendrecv 
+ queue ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! webrtcbin name=sendrecv bundle-policy=max-bundle 
 '''
 
 WEBSOCKET_URL = 'wss://media.streamit.live:5443/LiveApp/websocket?rtmpForward=undefined'
