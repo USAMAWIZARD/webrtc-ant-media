@@ -28,7 +28,7 @@ PIPELINE_DESC = '''
  queue ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! webrtcbin name=sendrecv bundle-policy=max-bundle 
 '''
 
-WEBSOCKET_URL = 'wss://media.streamit.live:5443/LiveApp/websocket?rtmpForward=undefined'
+WEBSOCKET_URL = 'wss://IP_ADDRESS:5443/LiveApp/websocket?rtmpForward=undefined'
 
 from websockets.version import version as wsv
 
