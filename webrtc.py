@@ -30,7 +30,7 @@ gi.require_version('GstSdp', '1.0')
 # '''
 
 # This one can be used for testing
-PIPELINE_DESC = '''
+PIPELINE_DESC_SEND = '''
  videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !
  queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
 
@@ -40,31 +40,124 @@ WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/LiveApp/websocket'
 print(WEBSOCKET_URL)
 
 
+class WebRTCAdapter:
+    ws_conn = None
+    webrtc_clients = {}  # idmode stream1play
+
+    def __init__(self, URL):
+        self.server = URL
+
+    async def connect(self):
+        print('Client Connect')
+        WebRTCClient.ws_conn = await websockets.connect(self.server, ssl=True)
+
+    async def play(self, id):
+        wrtc_client_id = id + "play"
+        if self.wrtc_client_exist(id):
+            pass
+        else:
+            play_client = WebRTCClient(id, "play")
+            WebRTCAdapter.webrtc_clients[wrtc_client_id] = play_client
+            await play_client.play()
+
+    async def publish(self, id):
+        wrtc_client_id = id + "publish"
+        if wrtc_client_id in WebRTCAdapter.webrtc_clients:
+            pass
+        else:
+            publish_client = WebRTCClient("id", "publish")
+            WebRTCAdapter.webrtc_clients[wrtc_client_id] = publish_client
+            publish_client.publish()
+
+    def wrtc_client_exist(self, id):
+        if id in WebRTCAdapter.webrtc_clients:
+            True
+        return False
+
+    def get_webrtc_client(self, id):
+        print(id + "tesing")
+        if id in WebRTCAdapter.webrtc_clients:
+            return WebRTCAdapter.webrtc_clients[id]
+        return None
+
+    def take_candidate(self, candidate):
+        wrtc_client_id_publish = candidate["streamId"] + "publish"
+        wrtc_client_id_play = candidate["streamId"] + "play"
+
+        publish_client = self.get_webrtc_client(wrtc_client_id_publish)
+        play_client = self.get_webrtc_client(wrtc_client_id_play)
+        if publish_client:
+            publish_client.take_candidate(candidate)
+        if play_client:
+            play_client.take_candidate(candidate)
+
+    def take_configuration(self, config):
+        wrtc_client_id = config["streamId"]
+
+        if (config['type'] == 'answer'):
+            wrtc_client_id = wrtc_client_id + "publish"
+        if (config['type'] == 'offer'):
+            wrtc_client_id = wrtc_client_id + "play"
+
+        wrtc_client = self.get_webrtc_client(wrtc_client_id)
+        print(wrtc_client, wrtc_client_id, WebRTCAdapter.webrtc_clients)
+        if wrtc_client:
+            wrtc_client.take_configuration(config)
+        else:
+            print("no webrtc client exist for this request",
+                  wrtc_client_id)
+
+    def notification(self, data):
+        if (data['definition'] == 'publish_started'):
+            print('Publish Started')
+        else:
+            print(data['definition'])
+
+    async def loop(self):
+        print('Inititialized')
+        assert WebRTCClient.ws_conn
+        async for message in WebRTCClient.ws_conn:
+
+            data = json.loads(message)
+
+            print('Message: ' + data['command'], data)
+
+            if (data['command'] == 'start'):
+                self.publish(data["streamId"])
+            elif (data['command'] == 'takeCandidate'):
+                self.take_candidate(data)
+            elif (data['command'] == 'takeConfiguration'):
+                self.take_configuration(data)
+            elif (data['command'] == 'notification'):
+                self.notification(data)
+            elif (data['command'] == 'error'):
+                print('Message: ' + data['definition'])
+
+        self.close_pipeline()
+        return 0
+
+
 class WebRTCClient:
-    def __init__(self, id):
+
+    def __init__(self, id, mode):
         self.id = id
-        self.conn = None
         self.pipe = None
         self.webrtc = None
         self.peer_id = None
         self.server = WEBSOCKET_URL
-
-    async def connect(self):
-        print('Client Connect')
-        self.conn = await websockets.connect(self.server, ssl=True)
-        await self.play()
+        self.mode = mode
 
     async def publish(self):
-        await self.conn.send('{"command":"publish","streamId":"' + self.id + '", "token":"null","video":true,"audio":true}')
+        await WebRTCClient.ws_conn.send('{"command":"publish","streamId":"' + self.id + '", "token":"null","video":true,"audio":true}')
 
     async def play(self):
-        await self.conn.send('{"command":"play","streamId":"' + self.id + '", "token":"null"}')
+        await WebRTCClient.ws_conn.send('{"command":"play","streamId":"' + self.id + '", "token":"null"}')
 
     def send_sdp(self, sdp, type):
         print('Send SDP ' + type)
         sdp = sdp.as_text()
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(self.conn.send(
+        loop.run_until_complete(WebRTCClient.ws_conn.send(
             '{"command":"takeConfiguration", "streamId": "' + self.id + '", "type": "' + type + '", "sdp": "' + sdp + '"}'))
         print(sdp)
         loop.close()
@@ -80,7 +173,7 @@ class WebRTCClient:
             str(mlineindex) + ', "id":"' + str(mlineindex) + \
             '" "candidate":"' + str(candidate) + '"}'
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(self.conn.send(data))
+        loop.run_until_complete(WebRTCClient.ws_conn.send(data))
         loop.close()
 
     def on_incoming_decodebin_stream(self, _, pad):
@@ -93,7 +186,7 @@ class WebRTCClient:
         name = s.to_string()
 
         if name.startswith('video'):
-            print("video stream recieved")
+            print("video stream recieved", self.id)
             q = Gst.ElementFactory.make('queue')
             conv = Gst.ElementFactory.make('videoconvert')
             capsfilter = Gst.ElementFactory.make("capsfilter")
@@ -120,8 +213,8 @@ class WebRTCClient:
             conv = Gst.ElementFactory.make('audioconvert')
             resample = Gst.ElementFactory.make('audioresample')
             sink = Gst.ElementFactory.make('appsink')
-            sink.set_property("emit-signals", True)
-            sink.connect("new-sample", self.on_decoded_audio_buffer)
+            # sink.set_property("emit-signals", True)
+            # sink.connect("new-sample", self.on_decoded_audio_buffer)
 
             self.pipe.add(q)
             self.pipe.add(conv)
@@ -141,13 +234,12 @@ class WebRTCClient:
 
         if not gst_buffer:
             print("failed to get buffer")
-        gst_buffer
 
         (result, mapinfo) = gst_buffer.map(Gst.MapFlags.READ)
 
         assert result
 
-        return Gst.PadProbeReturn.OK
+        return Gst.FlowReturn.OK
 
     def on_decoded_video_buffer(self, sink):
         print("decoded video buffer")
@@ -159,7 +251,7 @@ class WebRTCClient:
         width = structure.get_int("width")[1]
         height = structure.get_int("height")[1]
         format = structure.get_string("format")
-        print(width, height, format)
+        print(width, height, format, self.id)
 
         if not gst_buffer:
             print("failed to get buffer")
@@ -199,12 +291,6 @@ class WebRTCClient:
                             self.send_ice_candidate_message)
         self.webrtc.connect('pad-added', self.on_incoming_stream)
         self.pipe.set_state(Gst.State.PLAYING)
-
-    def notification(self, data):
-        if (data['definition'] == 'publish_started'):
-            print('Publish Started')
-        else:
-            print(data['definition'])
 
     def take_candidate(self, data):
         self.webrtc.emit('add-ice-candidate', data['label'], data['candidate'])
@@ -263,33 +349,10 @@ class WebRTCClient:
         self.pipe = None
         self.webrtc = None
 
-    async def loop(self):
-        print('Inititialized')
-        assert self.conn
-        async for message in self.conn:
-
-            data = json.loads(message)
-
-            print('Message: ' + data['command'], data)
-
-            if (data['command'] == 'start'):
-                self.start_pipeline("publish")
-            elif (data['command'] == 'takeCandidate'):
-                self.take_candidate(data)
-            elif (data['command'] == 'takeConfiguration'):
-                self.take_configuration(data)
-            elif (data['command'] == 'notification'):
-                self.notification(data)
-            elif (data['command'] == 'error'):
-                print('Message: ' + data['definition'])
-
-        self.close_pipeline()
-        return 0
-
     async def stop(self):
-        if self.conn:
-            await self.conn.close()
-        self.conn = None
+        if WebRTCClient.ws_conn:
+            await WebRTCClient.ws_conn.close()
+        WebRTCClient.ws_conn = None
 
 
 def check_plugins():
@@ -303,12 +366,26 @@ def check_plugins():
     return True
 
 
-if __name__ == '__main__':
+async def main():
     Gst.init(None)
     if not check_plugins():
         sys.exit(1)
-    client = WebRTCClient('abcde')
+
+    ws_adapter = WebRTCAdapter(WEBSOCKET_URL)
+    await ws_adapter.connect()
+    await ws_adapter.play("abcde")
+    await ws_adapter.play("abcdef")
+
+    # client1 = WebRTCClient('abcde')
+    # await client1.connect()
+    # await client1.play()
+    #
+    # # client2 = WebRTCClient('abcdef')
+    # # await client2.play()
+    #
+    await ws_adapter.loop()
+
+
+if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(client.connect())
-    res = loop.run_until_complete(client.loop())
-    sys.exit(res)
+    loop.run_until_complete(main())
