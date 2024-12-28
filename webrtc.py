@@ -1,7 +1,8 @@
-from websockets.version import version as wsv
+from websockets.version import version as ws
 from gi.repository import GstSdp
 from gi.repository import GstWebRTC
 from gi.repository import Gst
+from gi.repository import GstVideo
 import random
 import ssl
 import websockets
@@ -12,6 +13,10 @@ import json
 import argparse
 import json
 import pathlib
+import numpy as np
+from PIL import Image, ImageOps
+import base64
+from io import BytesIO
 
 import gi
 gi.require_version('Gst', '1.0')
@@ -29,7 +34,7 @@ PIPELINE_DESC = '''
  videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !
  queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
 
-PIPELINE_DESC = '''fakesrc ! fakesink webrtcbin name=sendrecv  bundle-policy=max-bundle'''
+PIPELINE_DESC = ''' webrtcbin name=sendrecv  bundle-policy=max-bundle ! fakesink sync=true'''
 
 WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/LiveApp/websocket'
 print(WEBSOCKET_URL)
@@ -91,24 +96,33 @@ class WebRTCClient:
             print("video stream recieved")
             q = Gst.ElementFactory.make('queue')
             conv = Gst.ElementFactory.make('videoconvert')
-            sink = Gst.ElementFactory.make('autovideosink')
+            capsfilter = Gst.ElementFactory.make("capsfilter")
+            rgbcaps = Gst.caps_from_string("video/x-raw,format=RGB")
+            capsfilter.set_property("caps", rgbcaps)
+            sink = Gst.ElementFactory.make('appsink')
+            sink.set_property("emit-signals", True)
+            sink.connect("new-sample", self.on_decoded_video_buffer)
 
             self.pipe.add(q)
             self.pipe.add(conv)
+            self.pipe.add(capsfilter)
             self.pipe.add(sink)
             self.pipe.sync_children_states()
             pad.link(q.get_static_pad('sink'))
-            pad.add_probe(Gst.PadProbeType.BUFFER,
-                          self.on_decoded_video_buffer, 0)
+
             q.link(conv)
-            conv.link(sink)
+            conv.link(capsfilter)
+            capsfilter.link(sink)
 
         elif name.startswith('audio'):
             print("audio stream recieved")
             q = Gst.ElementFactory.make('queue')
             conv = Gst.ElementFactory.make('audioconvert')
             resample = Gst.ElementFactory.make('audioresample')
-            sink = Gst.ElementFactory.make('autoaudiosink')
+            sink = Gst.ElementFactory.make('appsink')
+            sink.set_property("emit-signals", True)
+            sink.connect("new-sample", self.on_decoded_audio_buffer)
+
             self.pipe.add(q)
             self.pipe.add(conv)
             self.pipe.add(resample)
@@ -116,24 +130,53 @@ class WebRTCClient:
 
             self.pipe.sync_children_states()
             pad.link(q.get_static_pad('sink'))
-            pad.add_probe(Gst.PadProbeType.BUFFER,
-                          self.on_decoded_audio_buffer, 0)
-
             q.link(conv)
             conv.link(resample)
             resample.link(sink)
 
-    def on_decoded_audio_buffer(self, pad, info, u_data):
+    def on_decoded_audio_buffer(self, sink):
         print("decoded audio buffer")
-        gst_buffer = info.get_buffer()
+        sample = sink.emit("pull-sample")
+        gst_buffer = sample.get_buffer()
+
         if not gst_buffer:
             print("failed to get buffer")
+        gst_buffer
+
+        (result, mapinfo) = gst_buffer.map(Gst.MapFlags.READ)
+
+        assert result
 
         return Gst.PadProbeReturn.OK
 
-    def on_decoded_video_buffer(self, pad, info, u_data):
+    def on_decoded_video_buffer(self, sink):
         print("decoded video buffer")
-        return Gst.PadProbeReturn.OK
+        sample = sink.emit("pull-sample")
+        gst_buffer = sample.get_buffer()
+
+        caps = sample.get_caps()
+        structure = caps.get_structure(0)
+        width = structure.get_int("width")[1]
+        height = structure.get_int("height")[1]
+        format = structure.get_string("format")
+        print(width, height, format)
+
+        if not gst_buffer:
+            print("failed to get buffer")
+        gst_buffer
+
+        (result, mapinfo) = gst_buffer.map(Gst.MapFlags.READ)
+        assert result
+        numpy_frame = np.ndarray(
+            shape=(height, width, 3),
+            dtype=np.uint8,
+            buffer=mapinfo.data)
+        img = Image.fromarray(numpy_frame)
+        img.save("test.jpeg")
+
+        gst_buffer.unmap(mapinfo)
+
+        return Gst.FlowReturn.OK
 
     def on_incoming_stream(self, _, pad):
         print('on_incoming_stream')
