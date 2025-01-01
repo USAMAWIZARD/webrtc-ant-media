@@ -20,6 +20,8 @@ import base64
 from io import BytesIO
 
 import gi
+from test import *
+
 gi.require_version('Gst', '1.0')
 gi.require_version('GstWebRTC', '1.0')
 gi.require_version('GstSdp', '1.0')
@@ -35,7 +37,7 @@ PIPELINE_DESC_SEND = '''
  videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !
  queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
 
-PIPELINE_DESC_RECV = ''' webrtcbin name=sendrecv  bundle-policy=max-bundle ! fakesink sync=true'''
+PIPELINE_DESC_RECV = ''' webrtcbin name=sendrecv  bundle-policy=max-bundle  fakesink '''
 
 WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/live/websocket'
 
@@ -89,7 +91,6 @@ class WebRTCAdapter:
         return False
 
     def get_webrtc_client(self, id):
-        print(id + "tesing")
         if id in WebRTCAdapter.webrtc_clients:
             return WebRTCAdapter.webrtc_clients[id]
         return None
@@ -174,7 +175,6 @@ class WebRTCClient:
         element.emit('create-offer', None, promise)
 
     def send_ice_candidate_message(self, _, mlineindex, candidate):
-
         asyncio.set_event_loop(loop)
         data = '{"command":"takeCandidate","streamId":"' + self.id + '","label":' + \
             str(mlineindex) + ', "id":"' + str(mlineindex) + \
@@ -258,7 +258,6 @@ class WebRTCClient:
 
         if not gst_buffer:
             print("failed to get buffer")
-        gst_buffer
 
         (result, mapinfo) = gst_buffer.map(Gst.MapFlags.READ)
         assert result
@@ -267,7 +266,7 @@ class WebRTCClient:
             dtype=np.uint8,
             buffer=mapinfo.data)
         img = Image.fromarray(numpy_frame)
-        img.save("test.jpeg")
+        img.save(self.id+".jpeg")
 
         gst_buffer.unmap(mapinfo)
 
@@ -278,6 +277,8 @@ class WebRTCClient:
         if pad.direction != Gst.PadDirection.SRC:
             return
         decodebin = Gst.ElementFactory.make('decodebin')
+        decodebin.set_property("force-sw-decoders", True)
+
         self.pipe.add(decodebin)
         decodebin.connect('pad-added', self.on_incoming_decodebin_stream)
         decodebin.sync_state_with_parent()
@@ -384,11 +385,7 @@ async def main():
 
     ws_adapter = WebRTCAdapter(WEBSOCKET_URL)
     await ws_adapter.connect()
-
-    await ws_adapter.play("test")
-    await ws_adapter.play("test1")
-    await ws_adapter.play("test3")
-    await ws_adapter.play("test4")
+    await play_test(ws_adapter, num_streams=30)
 
     await ws_adapter.loop()
 
