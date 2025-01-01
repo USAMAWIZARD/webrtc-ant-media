@@ -18,7 +18,6 @@ import numpy as np
 from PIL import Image, ImageOps
 import base64
 from io import BytesIO
-
 import gi
 from test import *
 
@@ -42,8 +41,6 @@ PIPELINE_DESC_RECV = ''' webrtcbin name=sendrecv  bundle-policy=max-bundle  fake
 WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/live/websocket'
 
 WEBSOCKET_URL = 'wss://test.antmedia.io/usamatest/websocket'
-
-print(WEBSOCKET_URL)
 
 
 class WebRTCAdapter:
@@ -163,10 +160,11 @@ class WebRTCClient:
         await WebRTCClient.ws_conn.send('{"command":"play","streamId":"' + self.id + '", "token":"null"}')
 
     async def send_sdp(self, sdp, type):
+        asyncio.set_event_loop(loop)
         print('Send SDP ' + type, self.id)
         sdp = sdp.as_text()
-        await asyncio.ensure_future(WebRTCClient.ws_conn.send(
-            '{"command":"takeConfiguration", "streamId": "' + self.id + '", "type": "' + type + '", "sdp": "' + sdp + '"}'))
+        await WebRTCClient.ws_conn.send(
+            '{"command":"takeConfiguration", "streamId": "' + self.id + '", "type": "' + type + '", "sdp": "' + sdp + '"}')
 
     def on_negotiation_needed(self, element):
         print('Negotiation Needed')
@@ -318,7 +316,6 @@ class WebRTCClient:
 
     def on_answer_created(self, promise, _, __):
 
-        asyncio.set_event_loop(loop)
         print("answer created")
         promise.wait()
         reply = promise.get_reply()
@@ -326,7 +323,7 @@ class WebRTCClient:
         promise = Gst.Promise.new()
         self.webrtc.emit('set-local-description', answer, promise)
         promise.interrupt()
-        asyncio.ensure_future(self.send_sdp(answer.sdp, "answer"))
+        asyncio.run(self.send_sdp(answer.sdp, "answer"))
 
     def take_configuration(self, data):
         if (data['type'] == 'answer'):
@@ -385,7 +382,12 @@ async def main():
 
     ws_adapter = WebRTCAdapter(WEBSOCKET_URL)
     await ws_adapter.connect()
-    await play_test(ws_adapter, num_streams=30)
+    await ws_adapter.play("test-1")
+    await ws_adapter.play("test-2")
+    await ws_adapter.play("test-3")
+    await ws_adapter.play("test-4")
+
+    # await play_test(ws_adapter, num_streams=30)
 
     await ws_adapter.loop()
 
@@ -393,5 +395,5 @@ async def main():
 if __name__ == '__main__':
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    asyncio.ensure_future(main())
+    asyncio.run(main())
     loop.run_forever()

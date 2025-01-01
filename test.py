@@ -35,34 +35,34 @@ def wait_for_publish(num_streams):
             print("waiting for all the streams to get published")
             wait_for_publish()
     # verify if the stream was published
-
-
-async def main():
-    Gst.init(None)
-    if not check_plugins():
-        sys.exit(1)
-
-    Gst.init(None)
-    if not check_plugins():
-        sys.exit(1)
-
-    await play_adapter.connect()
-    await publish_adapter.connect()
-    publish_adapter.set_main_loop(loop)
-    play_adapter.set_main_loop(loop)
-
-    num_test_stream = 1
-    # publish_test(num_test_stream)
-    # wait_for_publish(num_test_stream)
-    # publish_test(num_test_stream)
-    await play_test(num_test_stream)
-
-    await publish_adapter.loop()
-    await play_adapter.loop()
-
-
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    asyncio.ensure_future(main())
-    loop.run_forever()
+#
+#
+# async def main():
+#     Gst.init(None)
+#     if not check_plugins():
+#         sys.exit(1)
+#
+#     Gst.init(None)
+#     if not check_plugins():
+#         sys.exit(1)
+#
+#     await play_adapter.connect()
+#     await publish_adapter.connect()
+#     publish_adapter.set_main_loop(loop)
+#     play_adapter.set_main_loop(loop)
+#
+#     num_test_stream = 1
+#     # publish_test(num_test_stream)
+#     # wait_for_publish(num_test_stream)
+#     # publish_test(num_test_stream)
+#     await play_test(num_test_stream)
+#
+#     await publish_adapter.loop()
+#     await play_adapter.loop()
+#
+#
+# if __name__ == '__main__':
+#     loop = asyncio.new_event_loop()
+#     asyncio.set_event_loop(loop)
+#     asyncio.ensure_future(main())
+#     loop.run_forever()
