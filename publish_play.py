@@ -1,9 +1,7 @@
-from webrtc import WebRTCAdapter
-from webrtc import init_gstreamer
+from webrtc import WebRTCAdapter, init_gstreamer
 
 appname = "live"
 WEBSOCKET_URL = 'wss://test.antmedia.io/' + appname + '/websocket'
-
 
 init_gstreamer()
 webrtc_adapter = WebRTCAdapter(WEBSOCKET_URL)
