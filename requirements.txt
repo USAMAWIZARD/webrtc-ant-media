@@ -1,0 +1,6 @@
+PyGObject
+pycairo
+websocket
+numpy
+opencv-python
+pillow

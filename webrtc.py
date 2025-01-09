@@ -291,21 +291,23 @@ class WebRTCClient():
         else:
             print("Video stream detected")
 
-            capsfilter = Gst.ElementFactory.make("capsfilter")
-            rgbcaps = Gst.caps_from_string("video/x-raw,format=RGB")
-            capsfilter.set_property("caps", rgbcaps)
+            # capsfilter = Gst.ElementFactory.make("capsfilter")
+            # rgbcaps = Gst.caps_from_string("video/x-raw,format=RGB")
+            # capsfilter.set_property("caps", rgbcaps)
 
             gst_pipe.add(queue)
-            gst_pipe.add(capsfilter)
             gst_pipe.add(converter)
             gst_pipe.add(sink)
-            capsfilter.sync_state_with_parent()
+
+            # gst_pipe.add(capsfilter)
+            # capsfilter.sync_state_with_parent()
+
             queue.sync_state_with_parent()
             converter.sync_state_with_parent()
             sink.sync_state_with_parent()
             queue.link(converter)
-            converter.link(capsfilter)
-            capsfilter.link(sink)
+            converter.link(sink)
+            # capsfilter.link(sink)
 
             rgb_pad = sink.get_static_pad("sink")
             if self.on_video_callback:
@@ -347,7 +349,7 @@ class WebRTCClient():
             depay = Gst.ElementFactory.make("rtph264depay", None)
             parse = Gst.ElementFactory.make("h264parse", None)
             convert_name = "videoconvert"
-            sink_name = "fakesink"
+            sink_name = "autovideosink"
 
         elif mediatype.startswith("audio"):
             decode = Gst.ElementFactory.make("opusdec", None)
