@@ -1,32 +1,12 @@
 from webrtc import WebRTCAdapter
-from webrtc import set_event_loop
-from webrtc import check_plugins
-from gi.repository import Gst
-import asyncio
-import sys
+from webrtc import init_gstreamer
 
-appname = "usamatest"
-WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/' + appname + '/websocket'
+appname = "live"
 WEBSOCKET_URL = 'wss://test.antmedia.io/' + appname + '/websocket'
 
 
-async def main():
-    Gst.init(None)
-    if not check_plugins():
-        sys.exit(1)
-
-    webrtc_adapter = WebRTCAdapter(WEBSOCKET_URL)
-    await webrtc_adapter.connect()
-    await webrtc_adapter.publish("test1")
-
-    webrtc_adapter = WebRTCAdapter(WEBSOCKET_URL)
-    await webrtc_adapter.connect()
-    await webrtc_adapter.publish("test2")
-
-
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    set_event_loop(loop)
-    asyncio.run(main())
-    loop.run_forever()
+init_gstreamer()
+webrtc_adapter = WebRTCAdapter(WEBSOCKET_URL)
+webrtc_adapter.connect()
+# replace publish call with play to play the stream
+webrtc_adapter.publish("test1")

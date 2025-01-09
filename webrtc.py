@@ -25,15 +25,9 @@ gi.require_version('Gst', '1.0')
 gi.require_version('GstWebRTC', '1.0')
 gi.require_version('GstSdp', '1.0')
 
-# Folowwing pipeline is for CSI Live Camera
-# PIPELINE_DESC = '''
-#  nvarguscamerasrc ! nvvideoconvert ! queue ! vp8enc deadline=1 ! rtpvp8pay !
-#  queue ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! webrtcbin name=sendrecv
-# '''
-
-# This one can be used for testing
 PIPELINE_DESC_SEND = '''
- videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !  queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
+ videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !
+ queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
 
 PIPELINE_DESC_RECV = '''webrtcbin name=sendrecv  bundle-policy=max-bundle ! queue ! fakesink'''
 
@@ -100,8 +94,8 @@ class WebRTCAdapter:
             target=self.socket_listner_thread, args=())
         thread.daemon = True
 
-        # pingtimer = threading.Timer(5, self.send_ping)
-        # pingtimer.start()
+        pingtimer = threading.Timer(5, self.send_ping)
+        pingtimer.start()
 
         thread.start()
         self.isopen.wait()
@@ -485,6 +479,12 @@ class WebRTCClient():
         if WebRTCClient.ws_conn:
             super.ws_conn.close()
         WebRTCClient.ws_conn = None
+
+
+def init_gstreamer():
+    Gst.init(None)
+    if not check_plugins():
+        sys.exit(1)
 
 
 def check_plugins():

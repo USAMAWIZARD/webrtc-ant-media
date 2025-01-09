@@ -1,12 +1,9 @@
 from webrtc import WebRTCAdapter
-from webrtc import check_plugins
-from gi.repository import Gst
-import asyncio
+from webrtc import init_gstreamer
 import requests
-import sys
 import time
 
-appname = "LiveApp"
+appname = "live"
 WEBSOCKET_URL = 'wss://test.antmedia.io/' + appname + '/websocket'
 prefix = "test-"
 
@@ -72,19 +69,14 @@ def get_all_active_streams(appname):
         print("Response:", response.text)
 
 
-async def main():
-    Gst.init(None)
-    if not check_plugins():
-        sys.exit(1)
+def main():
+    init_gstreamer()
 
-    nbstreams = 1
+    nbstreams = 50
     publish_test(nbstreams)
+
     wait_for_publish([f"{prefix}{i}" for i in range(nbstreams)])
     play_test(nbstreams)
 
 
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    asyncio.run(main())
-    loop.run_forever()
+main()
