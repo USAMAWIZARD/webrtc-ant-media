@@ -33,8 +33,7 @@ gi.require_version('GstSdp', '1.0')
 
 # This one can be used for testing
 PIPELINE_DESC_SEND = '''
- videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !
- queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
+ videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !  queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
 
 PIPELINE_DESC_RECV = '''webrtcbin name=sendrecv  bundle-policy=max-bundle ! queue ! fakesink'''
 
@@ -287,17 +286,125 @@ class WebRTCClient():
 
         return Gst.FlowReturn.OK
 
-    def on_incoming_stream(self, _, pad):
-        print('on_incoming_stream')
-        if pad.direction != Gst.PadDirection.SRC:
-            return
-        decodebin = Gst.ElementFactory.make('decodebin')
-        # decodebin.set_property("force-sw-decoders", True)
+    def handle_media_stream(self, pad, gst_pipe, convert_name, sink_name):
+        print(f"Trying to handle stream with {convert_name} ! {sink_name}")
 
-        self.pipe.add(decodebin)
-        decodebin.connect('pad-added', self.on_incoming_decodebin_stream)
-        decodebin.sync_state_with_parent()
-        self.webrtc.link(decodebin)
+        # Create a queue and sink element
+        queue = Gst.ElementFactory.make("queue", None)
+        sink = Gst.ElementFactory.make(sink_name, None)
+        converter = Gst.ElementFactory.make(convert_name, None)
+
+        if not all([queue, sink, converter]):
+            print("Failed to create necessary GStreamer elements.")
+            return
+
+        # Set sink properties
+        sink.set_property("sync", False)
+
+        # Determine if the stream is audio or video
+        if convert_name == "audioconvert":
+            print("Audio stream detected")
+            resample = Gst.ElementFactory.make("audioresample", None)
+
+            if not resample:
+                print("Failed to create audioresample element.")
+                return
+
+            gst_pipe.add(queue)
+            gst_pipe.add(converter)
+            gst_pipe.add(resample)
+            gst_pipe.add(sink)
+
+            queue.sync_state_with_parent()
+            converter.sync_state_with_parent()
+            resample.sync_state_with_parent()
+            sink.sync_state_with_parent()
+
+            queue.link(converter)
+            converter.link(resample)
+            resample.link(sink)
+
+        else:
+            print("Video stream detected")
+            time_overlay = Gst.ElementFactory.make("timeoverlay", None)
+
+            if not time_overlay:
+                print("Failed to create timeoverlay element.")
+                return
+
+            gst_pipe.add(queue)
+            gst_pipe.add(converter)
+            gst_pipe.add(time_overlay)
+            gst_pipe.add(sink)
+            queue.sync_state_with_parent()
+            converter.sync_state_with_parent()
+            time_overlay.sync_state_with_parent()
+            sink.sync_state_with_parent()
+            queue.link(converter)
+            converter.link(time_overlay)
+            time_overlay.link(sink)
+
+        queue_sink_pad = queue.get_static_pad("sink")
+        if not queue_sink_pad:
+            print("Failed to get the sink pad of the queue.")
+            return
+
+        ret = pad.link(queue_sink_pad)
+        if ret != Gst.PadLinkReturn.OK:
+            print(f"Failed to link pad: {ret}")
+        else:
+            print("Pad successfully linked.")
+
+    def on_incoming_stream(self, webrtc, pad):
+        decode = None
+        depay = None
+        parse = None
+        jitterbuffer = None
+
+        caps = pad.get_current_caps()
+        structure = caps.get_structure(0)
+        mediatype = structure.get_value("media")
+
+        if mediatype.startswith("video"):
+            decode = Gst.ElementFactory.make("avdec_h264", None)
+            depay = Gst.ElementFactory.make("rtph264depay", None)
+            parse = Gst.ElementFactory.make("h264parse", None)
+            convert_name = "videoconvert"
+            sink_name = "autovideosink"
+
+        elif mediatype.startswith("audio"):
+            decode = Gst.ElementFactory.make("opusdec", None)
+            depay = Gst.ElementFactory.make("rtpopusdepay", None)
+            parse = Gst.ElementFactory.make("opusparse", None)
+            convert_name = "audioconvert"
+            sink_name = "autoaudiosink"
+        else:
+            print(f"Unknown pad {pad.get_name()}, ignoring")
+            return
+
+        jitterbuffer = Gst.ElementFactory.make("rtpjitterbuffer", None)
+
+        pipeline = self.pipe
+        pipeline.add(jitterbuffer)
+        pipeline.add(depay)
+        pipeline.add(parse)
+        pipeline.add(decode)
+
+        sinkpad = jitterbuffer.get_static_pad("sink")
+        if pad.link(sinkpad) != Gst.PadLinkReturn.OK:
+            print("Failed to link incoming pad to jitter buffer sink pad")
+            return
+
+        jitterbuffer.link(depay)
+        depay.link(parse)
+        parse.link(decode)
+
+        for element in [jitterbuffer, depay, parse, decode]:
+            element.sync_state_with_parent()
+
+        decoded_pad = decode.get_static_pad("src")
+        self.handle_media_stream(
+            decoded_pad, pipeline, convert_name, sink_name)
 
     def start_pipeline(self, mode):
         print('Creating WebRTC Pipeline', mode, self.id)

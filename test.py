@@ -2,12 +2,13 @@ from webrtc import WebRTCAdapter
 from webrtc import check_plugins
 from gi.repository import Gst
 import asyncio
+import requests
 import sys
 import time
 
-WEBSOCKET_URL = 'wss://test.antmedia.io/usamatest/websocket'
+appname = "LiveApp"
+WEBSOCKET_URL = 'wss://test.antmedia.io/' + appname + '/websocket'
 prefix = "test-"
-
 
 loop = None
 
@@ -28,17 +29,47 @@ def play_test(num_streams):
         webrtc_adapter.play(prefix + str(i))
 
 
-def wait_for_publish(num_streams):
-    list = range(num_streams)
+def wait_for_publish(streamlist):
+    active_stream = get_all_active_streams(appname)
+    print("stream list", streamlist)
 
-    while True:
-        for i in range(num_streams):
-            pass
+    for stream in active_stream:
+        if stream in streamlist:
+            streamlist.remove(stream)
 
-        time.sleep(1)
-        if (len(list) > 0):
-            print("waiting for all the streams to get published")
-            wait_for_publish()
+    time.sleep(1)
+    if (len(streamlist) > 0):
+        print("waiting for all the streams to get published")
+        wait_for_publish(streamlist)
+    else:
+        print("all streams are published")
+
+
+def get_all_active_streams(appname):
+    if appname == []:
+        return None
+    # Define the API endpoint and headers
+    url = 'https://test.antmedia.io:5443/' + \
+        appname + '/rest/v2/broadcasts/list/0/100'
+    headers = {
+        'accept': 'application/json',
+    }
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        response_data = response.json()
+        print("Data retrieved successfully:")
+
+        broadcasting_stream_ids = [
+            stream['streamId'] for stream in response_data
+            if stream['status'] == 'broadcasting'
+        ]
+        print(broadcasting_stream_ids)
+        return broadcasting_stream_ids
+    else:
+        print(f"Failed to fetch data. Status code: {response.status_code}")
+        print("Response:", response.text)
 
 
 async def main():
@@ -46,9 +77,10 @@ async def main():
     if not check_plugins():
         sys.exit(1)
 
-    # publish_test(num_streams=1)
-    # wait_for_publish(10)
-    play_test(1)
+    nbstreams = 1
+    publish_test(nbstreams)
+    wait_for_publish([f"{prefix}{i}" for i in range(nbstreams)])
+    play_test(nbstreams)
 
 
 if __name__ == '__main__':

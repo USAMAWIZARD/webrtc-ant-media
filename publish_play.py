@@ -5,9 +5,9 @@ from gi.repository import Gst
 import asyncio
 import sys
 
-WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/live/websocket'
-
-WEBSOCKET_URL = 'wss://test.antmedia.io/usamatest/websocket'
+appname = "usamatest"
+WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/' + appname + '/websocket'
+WEBSOCKET_URL = 'wss://test.antmedia.io/' + appname + '/websocket'
 
 
 async def main():
