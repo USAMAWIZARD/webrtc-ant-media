@@ -1,71 +1,102 @@
-from websockets.version import version as ws
+# ulimit -n 65536 run this command to increase socket opening limit
 from gi.repository import GstSdp
 from gi.repository import GstWebRTC
 from gi.repository import Gst
-from gi.repository import GstVideo
-import random
-import time
-import ssl
-import websockets
-import asyncio
-import os
+import websocket
 import sys
 import json
-import argparse
-import json
-import pathlib
-import numpy as np
-from PIL import Image, ImageOps
-import base64
-from io import BytesIO
 import gi
-from test import *
+import threading
 
 gi.require_version('Gst', '1.0')
 gi.require_version('GstWebRTC', '1.0')
 gi.require_version('GstSdp', '1.0')
 
-# Folowwing pipeline is for CSI Live Camera
-# PIPELINE_DESC = '''
-#  nvarguscamerasrc ! nvvideoconvert ! queue ! vp8enc deadline=1 ! rtpvp8pay !
-#  queue ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! webrtcbin name=sendrecv
-# '''
-
-# This one can be used for testing
 PIPELINE_DESC_SEND = '''
  videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !
  queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
 
-PIPELINE_DESC_RECV = ''' webrtcbin name=sendrecv  bundle-policy=max-bundle  fakesink '''
-
-WEBSOCKET_URL = 'wss://ovh36.antmedia.io:5443/live/websocket'
-
-WEBSOCKET_URL = 'wss://test.antmedia.io/usamatest/websocket'
+PIPELINE_DESC_RECV = '''webrtcbin name=sendrecv  bundle-policy=max-bundle ! queue ! fakesink'''
 
 
 class WebRTCAdapter:
-    ws_conn = None
     webrtc_clients = {}  # idmode stream1play
 
     def __init__(self, URL):
         self.server = URL
+        self.client_id = ""
 
-    async def connect(self):
-        sslEnabled = True
-        if (self.server.startswith("ws:")):
-            sslEnabled = False
+    def on_message(self, ws, message):
+        data = json.loads(message)
 
-        WebRTCClient.ws_conn = await websockets.connect(self.server, ssl=sslEnabled)
-        print('Client Connect')
+        print('Message: ' + data['command'], data)
 
-    async def play(self, id):
+        if (data['command'] == 'start'):
+            self.start_publishing(data["streamId"])
+        elif (data['command'] == 'takeCandidate'):
+            self.take_candidate(data)
+        elif (data['command'] == 'takeConfiguration'):
+            self.take_configuration(data)
+        elif (data['command'] == 'notification'):
+            self.notification(data)
+        elif (data['command'] == 'error'):
+            print('Message: ' + data['definition'])
+
+    def on_error(self, ws, error):
+        print(f"Client {self.client_id} error: {error}")
+
+    def on_close(self, ws, close_status_code, close_msg):
+        print(f"Client {self.client_id} closed: {
+              close_status_code}, {close_msg}")
+
+    def on_open(self, ws):
+        self.isopen.set()
+        print(self.ws_conn)
+
+    def get_websocket(self):
+        return self.ws_conn
+
+    def socket_listner_thread(self):
+        websocket.enableTrace(True)
+        ws = websocket.WebSocketApp(
+            self.server,
+            on_message=self.on_message,
+            on_error=self.on_error,
+            on_close=self.on_close,
+            on_open=self.on_open,
+        )
+
+        self.ws_conn = ws
+        ws.run_forever()
+
+    def send_ping(self):
+        self.ws_conn.send('{"command": "ping"}')
+        pingtimer = threading.Timer(5, self.send_ping)
+        pingtimer.start()
+
+    def connect(self):
+        self.callback = "test"
+        self.isopen = threading.Event()
+        thread = threading.Thread(
+            target=self.socket_listner_thread, args=())
+        thread.daemon = True
+
+        pingtimer = threading.Timer(5, self.send_ping)
+        pingtimer.start()
+
+        thread.start()
+        self.isopen.wait()
+
+    def play(self, id, on_video_callback, on_audio_callback):
+        print("play request sent for id", id)
         wrtc_client_id = id
         if self.wrtc_client_exist(id):
             pass
         else:
-            play_client = WebRTCClient(id, "play")
+            play_client = WebRTCClient(
+                id, "play", self.ws_conn, on_video_callback, on_video_callback)
             WebRTCAdapter.webrtc_clients[wrtc_client_id] = play_client
-            await play_client.play()
+            play_client.play()
 
     def start_publishing(self, id):
         if publish_client := self.get_webrtc_client(id):
@@ -73,14 +104,14 @@ class WebRTCAdapter:
         else:
             print("no client found")
 
-    async def publish(self, id):
+    def publish(self, id):
         wrtc_client_id = id
         if wrtc_client_id in WebRTCAdapter.webrtc_clients:
             pass
         else:
-            publish_client = WebRTCClient(id, "publish")
+            publish_client = WebRTCClient(id, "publish", self.ws_conn)
             WebRTCAdapter.webrtc_clients[wrtc_client_id] = publish_client
-            await publish_client.send_publish_request()
+            publish_client.send_publish_request()
 
     def wrtc_client_exist(self, id):
         if id in WebRTCAdapter.webrtc_clients:
@@ -117,53 +148,31 @@ class WebRTCAdapter:
         else:
             print(data['definition'])
 
-    async def loop(self):
-        print('Inititialized')
-        assert WebRTCClient.ws_conn
-        async for message in WebRTCClient.ws_conn:
 
-            data = json.loads(message)
+class WebRTCClient():
 
-            print('Message: ' + data['command'], data)
-
-            if (data['command'] == 'start'):
-                self.start_publishing(data["streamId"])
-            elif (data['command'] == 'takeCandidate'):
-                self.take_candidate(data)
-            elif (data['command'] == 'takeConfiguration'):
-                self.take_configuration(data)
-            elif (data['command'] == 'notification'):
-                self.notification(data)
-            elif (data['command'] == 'error'):
-                print('Message: ' + data['definition'])
-
-        self.close_pipeline()
-        return 0
-
-
-class WebRTCClient:
-
-    def __init__(self, id, mode):
+    def __init__(self, id, mode, ws_client, on_video_callback=None, on_audio_callback=None):
         self.id = id
         self.pipe = None
         self.webrtc = None
         self.peer_id = None
-        self.server = WEBSOCKET_URL
         self.mode = mode
+        self.websocket_client = ws_client
+        self.on_video_callback = on_video_callback
+        self.on_audio_callback = on_audio_callback
 
-    async def send_publish_request(self):
-        print("-------publish request send for", self.id)
-        await asyncio.ensure_future(WebRTCClient.ws_conn.send(
-            '{"command":"publish","streamId":"' + self.id + '", "token":"null","video":true,"audio":true}'))
+    def send_publish_request(self):
+        self.websocket_client.send(
+            '{"command":"publish","streamId":"' + self.id + '", "token":"null","video":true,"audio":true}')
 
-    async def play(self):
-        await WebRTCClient.ws_conn.send('{"command":"play","streamId":"' + self.id + '", "token":"null"}')
+    def play(self):
+        self.websocket_client.send(
+            '{"command":"play","streamId":"' + self.id + '", "token":"null"}')
 
-    async def send_sdp(self, sdp, type):
-        asyncio.set_event_loop(loop)
+    def send_sdp(self, sdp, type):
         print('Send SDP ' + type, self.id)
         sdp = sdp.as_text()
-        await WebRTCClient.ws_conn.send(
+        self.websocket_client.send(
             '{"command":"takeConfiguration", "streamId": "' + self.id + '", "type": "' + type + '", "sdp": "' + sdp + '"}')
 
     def on_negotiation_needed(self, element):
@@ -173,11 +182,10 @@ class WebRTCClient:
         element.emit('create-offer', None, promise)
 
     def send_ice_candidate_message(self, _, mlineindex, candidate):
-        asyncio.set_event_loop(loop)
         data = '{"command":"takeCandidate","streamId":"' + self.id + '","label":' + \
             str(mlineindex) + ', "id":"' + str(mlineindex) + \
             '" "candidate":"' + str(candidate) + '"}'
-        asyncio.ensure_future(WebRTCClient.ws_conn.send(data))
+        self.websocket_client.send(data)
 
     def on_incoming_decodebin_stream(self, _, pad):
         print('Incoming Decodebin Stream')
@@ -192,12 +200,7 @@ class WebRTCClient:
             print("video stream recieved", self.id)
             q = Gst.ElementFactory.make('queue')
             conv = Gst.ElementFactory.make('videoconvert')
-            capsfilter = Gst.ElementFactory.make("capsfilter")
-            rgbcaps = Gst.caps_from_string("video/x-raw,format=RGB")
-            capsfilter.set_property("caps", rgbcaps)
-            sink = Gst.ElementFactory.make('appsink')
-            sink.set_property("emit-signals", True)
-            sink.connect("new-sample", self.on_decoded_video_buffer)
+            sink = Gst.ElementFactory.make('autovideosink')
 
             self.pipe.add(q)
             self.pipe.add(conv)
@@ -215,9 +218,7 @@ class WebRTCClient:
             q = Gst.ElementFactory.make('queue')
             conv = Gst.ElementFactory.make('audioconvert')
             resample = Gst.ElementFactory.make('audioresample')
-            sink = Gst.ElementFactory.make('appsink')
-            # sink.set_property("emit-signals", True)
-            # sink.connect("new-sample", self.on_decoded_audio_buffer)
+            sink = Gst.ElementFactory.make('autoaudiosink')
 
             self.pipe.add(q)
             self.pipe.add(conv)
@@ -230,57 +231,132 @@ class WebRTCClient:
             conv.link(resample)
             resample.link(sink)
 
-    def on_decoded_audio_buffer(self, sink):
-        sample = sink.emit("pull-sample")
-        gst_buffer = sample.get_buffer()
+    def handle_media_stream(self, pad, gst_pipe, convert_name, sink_name):
+        print(f"Trying to handle stream with {convert_name} ! {sink_name}")
 
-        if not gst_buffer:
-            print("failed to get buffer")
+        # Create a queue and sink element
+        queue = Gst.ElementFactory.make("queue", None)
+        sink = Gst.ElementFactory.make(sink_name, None)
+        converter = Gst.ElementFactory.make(convert_name, None)
 
-        (result, mapinfo) = gst_buffer.map(Gst.MapFlags.READ)
-
-        assert result
-
-        return Gst.FlowReturn.OK
-
-    def on_decoded_video_buffer(self, sink):
-        sample = sink.emit("pull-sample")
-        gst_buffer = sample.get_buffer()
-
-        caps = sample.get_caps()
-        structure = caps.get_structure(0)
-        width = structure.get_int("width")[1]
-        height = structure.get_int("height")[1]
-        format = structure.get_string("format")
-        print(width, height, format, self.id)
-
-        if not gst_buffer:
-            print("failed to get buffer")
-
-        (result, mapinfo) = gst_buffer.map(Gst.MapFlags.READ)
-        assert result
-        numpy_frame = np.ndarray(
-            shape=(height, width, 3),
-            dtype=np.uint8,
-            buffer=mapinfo.data)
-        img = Image.fromarray(numpy_frame)
-        img.save(self.id+".jpeg")
-
-        gst_buffer.unmap(mapinfo)
-
-        return Gst.FlowReturn.OK
-
-    def on_incoming_stream(self, _, pad):
-        print('on_incoming_stream')
-        if pad.direction != Gst.PadDirection.SRC:
+        if not all([queue, sink, converter]):
+            print("Failed to create necessary GStreamer elements.")
             return
-        decodebin = Gst.ElementFactory.make('decodebin')
-        decodebin.set_property("force-sw-decoders", True)
 
-        self.pipe.add(decodebin)
-        decodebin.connect('pad-added', self.on_incoming_decodebin_stream)
-        decodebin.sync_state_with_parent()
-        self.webrtc.link(decodebin)
+        # Set sink properties
+        sink.set_property("sync", False)
+
+        # Determine if the stream is audio or video
+        if convert_name == "audioconvert":
+            print("Audio stream detected")
+            resample = Gst.ElementFactory.make("audioresample", None)
+
+            if not resample:
+                print("Failed to create audioresample element.")
+                return
+
+            gst_pipe.add(queue)
+            gst_pipe.add(converter)
+            gst_pipe.add(resample)
+            gst_pipe.add(sink)
+
+            queue.sync_state_with_parent()
+            converter.sync_state_with_parent()
+            resample.sync_state_with_parent()
+            sink.sync_state_with_parent()
+
+            queue.link(converter)
+            converter.link(resample)
+            resample.link(sink)
+            if self.on_audio_callback:
+                pad.add_probe(
+                    Gst.PadProbeType.BUFFER, self.on_audio_callback, self.id)
+
+        else:
+            print("Video stream detected")
+
+            capsfilter = Gst.ElementFactory.make("capsfilter")
+            rgbcaps = Gst.caps_from_string("video/x-raw,format=RGB")
+            capsfilter.set_property("caps", rgbcaps)
+
+            gst_pipe.add(queue)
+            gst_pipe.add(capsfilter)
+            gst_pipe.add(converter)
+            gst_pipe.add(sink)
+            capsfilter.sync_state_with_parent()
+            queue.sync_state_with_parent()
+            converter.sync_state_with_parent()
+            sink.sync_state_with_parent()
+            queue.link(converter)
+            converter.link(capsfilter)
+            capsfilter.link(sink)
+
+            rgb_pad = sink.get_static_pad("sink")
+            if self.on_video_callback:
+                rgb_pad.add_probe(
+                    Gst.PadProbeType.BUFFER, self.on_video_callback, self.id)
+
+        queue_sink_pad = queue.get_static_pad("sink")
+        if not queue_sink_pad:
+            print("Failed to get the sink pad of the queue.")
+            return
+
+        ret = pad.link(queue_sink_pad)
+        if ret != Gst.PadLinkReturn.OK:
+            print(f"Failed to link pad: {ret}")
+        else:
+            print("Pad successfully linked.")
+
+    def on_incoming_stream(self, webrtc, pad):
+        decode = None
+        depay = None
+        parse = None
+        jitterbuffer = None
+
+        caps = pad.get_current_caps()
+        structure = caps.get_structure(0)
+        mediatype = structure.get_value("media")
+
+        if mediatype.startswith("video"):
+            decode = Gst.ElementFactory.make("avdec_h264", None)
+            depay = Gst.ElementFactory.make("rtph264depay", None)
+            parse = Gst.ElementFactory.make("h264parse", None)
+            convert_name = "videoconvert"
+            sink_name = "fakesink"
+
+        elif mediatype.startswith("audio"):
+            decode = Gst.ElementFactory.make("opusdec", None)
+            depay = Gst.ElementFactory.make("rtpopusdepay", None)
+            parse = Gst.ElementFactory.make("opusparse", None)
+            convert_name = "audioconvert"
+            sink_name = "autoaudiosink"
+        else:
+            print(f"Unknown pad {pad.get_name()}, ignoring")
+            return
+
+        jitterbuffer = Gst.ElementFactory.make("rtpjitterbuffer", None)
+
+        pipeline = self.pipe
+        pipeline.add(jitterbuffer)
+        pipeline.add(depay)
+        pipeline.add(parse)
+        pipeline.add(decode)
+
+        sinkpad = jitterbuffer.get_static_pad("sink")
+        if pad.link(sinkpad) != Gst.PadLinkReturn.OK:
+            print("Failed to link incoming pad to jitter buffer sink pad")
+            return
+
+        jitterbuffer.link(depay)
+        depay.link(parse)
+        parse.link(decode)
+
+        for element in [jitterbuffer, depay, parse, decode]:
+            element.sync_state_with_parent()
+
+        decoded_pad = decode.get_static_pad("src")
+        self.handle_media_stream(
+            decoded_pad, pipeline, convert_name, sink_name)
 
     def start_pipeline(self, mode):
         print('Creating WebRTC Pipeline', mode, self.id)
@@ -303,7 +379,6 @@ class WebRTCClient:
 
     def on_offer_created(self, promise, _, __):
 
-        asyncio.set_event_loop(loop)
         print('Offer Created')
         promise.wait()
         reply = promise.get_reply()
@@ -312,7 +387,7 @@ class WebRTCClient:
         promise = Gst.Promise.new()
         self.webrtc.emit('set-local-description', offer, promise)
         promise.interrupt()
-        asyncio.ensure_future(self.send_sdp(offer.sdp, "offer"))
+        self.send_sdp(offer.sdp, "offer")
 
     def on_answer_created(self, promise, _, __):
 
@@ -323,7 +398,7 @@ class WebRTCClient:
         promise = Gst.Promise.new()
         self.webrtc.emit('set-local-description', answer, promise)
         promise.interrupt()
-        asyncio.run(self.send_sdp(answer.sdp, "answer"))
+        self.send_sdp(answer.sdp, "answer")
 
     def take_configuration(self, data):
         if (data['type'] == 'answer'):
@@ -358,10 +433,16 @@ class WebRTCClient:
         self.pipe = None
         self.webrtc = None
 
-    async def stop(self):
+    def stop(self):
         if WebRTCClient.ws_conn:
-            await WebRTCClient.ws_conn.close()
+            super.ws_conn.close()
         WebRTCClient.ws_conn = None
+
+
+def init_gstreamer():
+    Gst.init(None)
+    if not check_plugins():
+        sys.exit(1)
 
 
 def check_plugins():
@@ -373,27 +454,3 @@ def check_plugins():
         print('Missing gstreamer plugins:', missing)
         return False
     return True
-
-
-async def main():
-    Gst.init(None)
-    if not check_plugins():
-        sys.exit(1)
-
-    ws_adapter = WebRTCAdapter(WEBSOCKET_URL)
-    await ws_adapter.connect()
-    await ws_adapter.play("test-1")
-    await ws_adapter.play("test-2")
-    await ws_adapter.play("test-3")
-    await ws_adapter.play("test-4")
-
-    # await play_test(ws_adapter, num_streams=30)
-
-    await ws_adapter.loop()
-
-
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    asyncio.run(main())
-    loop.run_forever()
