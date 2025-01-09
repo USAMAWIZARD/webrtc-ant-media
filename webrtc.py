@@ -1,12 +1,18 @@
 # ulimit -n 65536 run this command to increase socket opening limit
+import threading
+import gi
+import json
+import sys
+import os
+import asyncio
+import ssl
+import time
+import random
+from gi.repository import GstVideo
+import websocket
 from gi.repository import GstSdp
 from gi.repository import GstWebRTC
 from gi.repository import Gst
-import websocket
-import sys
-import json
-import gi
-import threading
 
 gi.require_version('Gst', '1.0')
 gi.require_version('GstWebRTC', '1.0')
@@ -87,7 +93,7 @@ class WebRTCAdapter:
         thread.start()
         self.isopen.wait()
 
-    def play(self, id, on_video_callback, on_audio_callback):
+    def play(self, id, on_video_callback=None, on_audio_callback=None):
         print("play request sent for id", id)
         wrtc_client_id = id
         if self.wrtc_client_exist(id):
@@ -204,14 +210,12 @@ class WebRTCClient():
 
             self.pipe.add(q)
             self.pipe.add(conv)
-            self.pipe.add(capsfilter)
             self.pipe.add(sink)
             self.pipe.sync_children_states()
             pad.link(q.get_static_pad('sink'))
 
             q.link(conv)
-            conv.link(capsfilter)
-            capsfilter.link(sink)
+            conv.link(sink)
 
         elif name.startswith('audio'):
             print("audio stream recieved")
@@ -230,6 +234,18 @@ class WebRTCClient():
             q.link(conv)
             conv.link(resample)
             resample.link(sink)
+
+    def handle_media_stream(self, pad, gst_pipe, convert_name, sink_name):
+        print(f"Trying to handle stream with {convert_name} ! {sink_name}")
+
+        # Create a queue and sink element
+        queue = Gst.ElementFactory.make("queue", None)
+        sink = Gst.ElementFactory.make(sink_name, None)
+        converter = Gst.ElementFactory.make(convert_name, None)
+
+        if not all([queue, sink, converter]):
+            print("Failed to create necessary GStreamer elements.")
+            return
 
     def handle_media_stream(self, pad, gst_pipe, convert_name, sink_name):
         print(f"Trying to handle stream with {convert_name} ! {sink_name}")
@@ -295,6 +311,15 @@ class WebRTCClient():
             if self.on_video_callback:
                 rgb_pad.add_probe(
                     Gst.PadProbeType.BUFFER, self.on_video_callback, self.id)
+
+            gst_pipe.add(queue)
+            gst_pipe.add(converter)
+            gst_pipe.add(sink)
+            queue.sync_state_with_parent()
+            converter.sync_state_with_parent()
+            sink.sync_state_with_parent()
+            queue.link(converter)
+            converter.link(sink)
 
         queue_sink_pad = queue.get_static_pad("sink")
         if not queue_sink_pad:
