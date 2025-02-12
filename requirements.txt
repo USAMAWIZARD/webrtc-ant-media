@@ -1,6 +1,6 @@
 PyGObject
 pycairo
-websocket-client
+websocket
 numpy
 opencv-python
 pillow
