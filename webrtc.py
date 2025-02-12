@@ -19,10 +19,11 @@ gi.require_version('GstWebRTC', '1.0')
 gi.require_version('GstSdp', '1.0')
 
 PIPELINE_DESC_SEND = '''
- videotestsrc is-live=true pattern=ball ! videoconvert ! queue ! x264enc  speed-preset=veryfast tune=zerolatency key-int-max=1  ! rtph264pay !
- queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle'''
+ videotestsrc ! videoconvert  ! video/x-raw,format=I420 ! x264enc  speed-preset=veryfast tune=zerolatency  ! rtph264pay !
+ queue ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! webrtcbin name=sendrecv  bundle-policy=max-bundle
+ audiotestsrc ! audioconvert ! audioresample   ! opusenc bitrate=192000  ! queue ! rtpopuspay ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97 ! sendrecv. '''
 
-PIPELINE_DESC_RECV = '''webrtcbin name=sendrecv  bundle-policy=max-bundle ! queue ! fakesink'''
+PIPELINE_DESC_RECV = '''webrtcbin name=sendrecv  bundle-policy=max-bundle fakesrc ! fakesink'''
 
 
 class WebRTCAdapter:
@@ -247,22 +248,8 @@ class WebRTCClient():
             print("Failed to create necessary GStreamer elements.")
             return
 
-    def handle_media_stream(self, pad, gst_pipe, convert_name, sink_name):
-        print(f"Trying to handle stream with {convert_name} ! {sink_name}")
-
-        # Create a queue and sink element
-        queue = Gst.ElementFactory.make("queue", None)
-        sink = Gst.ElementFactory.make(sink_name, None)
-        converter = Gst.ElementFactory.make(convert_name, None)
-
-        if not all([queue, sink, converter]):
-            print("Failed to create necessary GStreamer elements.")
-            return
-
-        # Set sink properties
         sink.set_property("sync", False)
 
-        # Determine if the stream is audio or video
         if convert_name == "audioconvert":
             print("Audio stream detected")
             resample = Gst.ElementFactory.make("audioresample", None)
@@ -285,43 +272,37 @@ class WebRTCClient():
             converter.link(resample)
             resample.link(sink)
             if self.on_audio_callback:
-                pad.add_probe(
-                    Gst.PadProbeType.BUFFER, self.on_audio_callback, self.id)
+                pass
+                # pad.add_probe(
+                #     Gst.PadProbeType.BUFFER, self.on_audio_callback, self.id)
 
         else:
             print("Video stream detected")
 
-            # capsfilter = Gst.ElementFactory.make("capsfilter")
-            # rgbcaps = Gst.caps_from_string("video/x-raw,format=RGB")
-            # capsfilter.set_property("caps", rgbcaps)
-
             gst_pipe.add(queue)
             gst_pipe.add(converter)
             gst_pipe.add(sink)
-
-            # gst_pipe.add(capsfilter)
-            # capsfilter.sync_state_with_parent()
 
             queue.sync_state_with_parent()
             converter.sync_state_with_parent()
             sink.sync_state_with_parent()
             queue.link(converter)
-            converter.link(sink)
-            # capsfilter.link(sink)
 
-            rgb_pad = sink.get_static_pad("sink")
             if self.on_video_callback:
+                capsfilter = Gst.ElementFactory.make("capsfilter")
+                rgbcaps = Gst.caps_from_string("video/x-raw,format=RGB")
+                capsfilter.set_property("caps", rgbcaps)
+                gst_pipe.add(capsfilter)
+                capsfilter.sync_state_with_parent()
+
+                rgb_pad = sink.get_static_pad("sink")
+                converter.link(capsfilter)
+                capsfilter.link(sink)
+
                 rgb_pad.add_probe(
                     Gst.PadProbeType.BUFFER, self.on_video_callback, self.id)
-
-            gst_pipe.add(queue)
-            gst_pipe.add(converter)
-            gst_pipe.add(sink)
-            queue.sync_state_with_parent()
-            converter.sync_state_with_parent()
-            sink.sync_state_with_parent()
-            queue.link(converter)
-            converter.link(sink)
+            else:
+                converter.link(sink)
 
         queue_sink_pad = queue.get_static_pad("sink")
         if not queue_sink_pad:
@@ -361,6 +342,9 @@ class WebRTCClient():
             print(f"Unknown pad {pad.get_name()}, ignoring")
             return
 
+        if self.on_video_callback:
+            sink_name = "fakesink"
+
         jitterbuffer = Gst.ElementFactory.make("rtpjitterbuffer", None)
 
         pipeline = self.pipe
@@ -371,14 +355,17 @@ class WebRTCClient():
 
         sinkpad = jitterbuffer.get_static_pad("sink")
         if pad.link(sinkpad) != Gst.PadLinkReturn.OK:
-            print("Failed to link incoming pad to jitter buffer sink pad")
+            print(
+                "Failed to link incoming pad to jitter buffer sink pad media type", mediatype)
             return
+        else:
+            print("linked jitter buffer")
 
         jitterbuffer.link(depay)
         depay.link(parse)
         parse.link(decode)
 
-        for element in [jitterbuffer, depay, parse, decode]:
+        for element in [depay, parse, decode, jitterbuffer]:
             element.sync_state_with_parent()
 
         decoded_pad = decode.get_static_pad("src")
