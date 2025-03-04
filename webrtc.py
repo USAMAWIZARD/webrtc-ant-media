@@ -50,11 +50,11 @@ class WebRTCAdapter:
             print('Message: ' + data['definition'])
 
     def on_error(self, ws, error):
-        print(f"Client {self.client_id} error: {error}")
+        print("Client {} error: {}".format(self.client_id, error))
 
     def on_close(self, ws, close_status_code, close_msg):
-        print(f"Client {self.client_id} closed: {
-              close_status_code}, {close_msg}")
+        print("Client {} closed: {}, {}", self.client_id,
+              close_status_code, close_msg)
 
     def on_open(self, ws):
         self.isopen.set()
@@ -237,7 +237,8 @@ class WebRTCClient():
             resample.link(sink)
 
     def handle_media_stream(self, pad, gst_pipe, convert_name, sink_name):
-        print(f"Trying to handle stream with {convert_name} ! {sink_name}")
+        print("Trying to handle stream with {} ! {}".format(
+            convert_name, sink_name))
 
         # Create a queue and sink element
         queue = Gst.ElementFactory.make("queue", None)
@@ -311,7 +312,7 @@ class WebRTCClient():
 
         ret = pad.link(queue_sink_pad)
         if ret != Gst.PadLinkReturn.OK:
-            print(f"Failed to link pad: {ret}")
+            print("Failed to link pad: {}".format(ret))
         else:
             print("Pad successfully linked.")
 
@@ -339,7 +340,7 @@ class WebRTCClient():
             convert_name = "audioconvert"
             sink_name = "autoaudiosink"
         else:
-            print(f"Unknown pad {pad.get_name()}, ignoring")
+            print("Unknown pad {}, ignoring".format(pad.get_name()))
             return
 
         if self.on_video_callback:
