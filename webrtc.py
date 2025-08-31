@@ -9,6 +9,7 @@ import ssl
 import time
 import random
 from gi.repository import GstVideo
+import json
 import websocket
 from gi.repository import GstSdp
 from gi.repository import GstWebRTC
@@ -180,7 +181,7 @@ class WebRTCClient():
         print('Send SDP ' + type, self.id)
         sdp = sdp.as_text()
         self.websocket_client.send(
-            '{"command":"takeConfiguration", "streamId": "' + self.id + '", "type": "' + type + '", "sdp": "' + sdp + '"}')
+            '{"command":"takeConfiguration", "streamId": "' + self.id + '", "type": "' + type + '", "sdp": ' + json.dumps(sdp) + '}')
 
     def on_negotiation_needed(self, element):
         print('Negotiation Needed')
@@ -191,7 +192,7 @@ class WebRTCClient():
     def send_ice_candidate_message(self, _, mlineindex, candidate):
         data = '{"command":"takeCandidate","streamId":"' + self.id + '","label":' + \
             str(mlineindex) + ', "id":"' + str(mlineindex) + \
-            '" "candidate":"' + str(candidate) + '"}'
+            '", "candidate":"' + str(candidate) + '"}'
         self.websocket_client.send(data)
 
     def on_incoming_decodebin_stream(self, _, pad):
